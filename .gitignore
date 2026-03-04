@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.idea/
+*.log
+.DS_Store
+cap-copy-*.js
+capacitor.config.json
+capacitor.config.ts
+android/
+ios/

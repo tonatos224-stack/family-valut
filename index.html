@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Family Vault | Мои Пароли</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1DB954">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Боковая панель (Sidebar) -->
+        <aside id="sidebar" class="sidebar" style="display: none;">
+            <div class="sidebar-nav">
+                <div class="nav-item active" onclick="window.filterFamily('All')">
+                    <span>🏠</span> Главная
+                </div>
+                <div class="nav-item" onclick="document.getElementById('search-input').focus()">
+                    <span>🔍</span> Поиск
+                </div>
+            </div>
+
+            <div class="sidebar-library" style="flex: 1; display: flex; flex-direction: column;">
+                <h4>Семейные папки</h4>
+                <div id="family-nav" style="flex: 1;">
+                    <div class="nav-item" onclick="window.filterFamily('Папа')"><span>👨</span> Папа</div>
+                    <div class="nav-item" onclick="window.filterFamily('Мама')"><span>👩</span> Мама</div>
+                    <div class="nav-item" onclick="window.filterFamily('Ариша')"><span>👧</span> Ариша</div>
+                    <div class="nav-item" onclick="window.filterFamily('Никита')"><span>🧒</span> Никита</div>
+                </div>
+
+                <div class="install-app" onclick="window.showDownloadInfo()">
+                    <span>⏬</span> Скачать приложение
+                </div>
+            </div>
+        </aside>
+
+        <!-- Экран входа -->
+        <div id="auth-screen">
+            <div class="auth-card">
+                <h1 style="font-size: 3rem; margin-bottom: 24px; letter-spacing: -2px;">Family Vault</h1>
+                <p style="color: var(--text-subdued); margin-bottom: 32px;">Добро пожаловать. Введите кодовое слово.</p>
+                <input type="password" id="master-password" class="input-field" placeholder="Ваше кодовое слово">
+                <button class="btn btn-primary" style="width: 100%; margin-top: 24px;"
+                    onclick="window.unlockVault()">Войти в сейф</button>
+            </div>
+        </div>
+
+        <!-- Основной контент (Main View) -->
+        <main id="dashboard" style="display: none;">
+            <header style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 40px;">
+                <div>
+                    <h2 id="current-view-title"
+                        style="font-size: 4rem; margin-bottom: 10px; font-weight: 900; letter-spacing: -2px;">Все вместе
+                    </h2>
+                    <p style="color: var(--text-subdued); font-weight: 700;">СЕЙФ ЗАШИФРОВАН ПО УЛЬТРАГЕНИАЛЬНОМУ
+                        ПЕНТАГОНОВСКОМУ ХАКЕРСКОМУ ЛЕГЕНДАРНОМУ ФОРМАТУ ПЕПЕ ШНЕЙНЕ АЕС 256</p>
+                </div>
+                <div
+                    style="display: flex; gap: 12px; align-items: center; width: 100%; justify-content: space-between;">
+                    <input type="text" id="search-input" class="input-field" placeholder="Поиск..."
+                        style="margin: 0; flex: 1; border-radius: 500px; padding: 12px 20px; background: rgba(255,255,255,0.1);">
+                    <button class="btn btn-primary" onclick="window.showModal()" style="padding: 12px 20px;">+</button>
+                </div>
+            </header>
+
+            <div id="password-list" class="password-grid">
+                <!-- Сюда будут динамически добавляться карточки паролей -->
+            </div>
+        </main>
+
+        <!-- Модальное окно -->
+        <div id="modal-overlay" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header"
+                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                    <h3>Новая запись</h3>
+                    <button class="btn" onclick="window.hideModal()"
+                        style="background: transparent; font-size: 1.5rem;">×</button>
+                </div>
+                <div class="form-group">
+                    <label>ВЛАДЕЛЕЦ</label>
+                    <select id="vault-member" class="input-field">
+                        <option value="Папа">👨 Папа</option>
+                        <option value="Мама">👩 Мама</option>
+                        <option value="Ариша">👧 Ариша</option>
+                        <option value="Никита">🧒 Никита</option>
+                        <option value="All">🏠 Общее</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>СЕРВИС</label>
+                    <input type="text" id="vault-title" class="input-field" placeholder="Название (напр. Netflix)">
+                </div>
+                <div class="form-group">
+                    <label>ЛОГИН</label>
+                    <input type="text" id="vault-login" class="input-field" placeholder="Email или имя пользователя">
+                </div>
+                <div class="form-group">
+                    <label>ПАРОЛЬ</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="password" id="vault-pass" class="input-field" placeholder="••••••••"
+                            style="flex: 1;">
+                        <button class="btn" onclick="window.generatePass()"
+                            style="background: var(--bg-highlight); padding: 0 16px;">🎲</button>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 32px;">
+                    <button class="btn btn-primary" style="flex: 1;" onclick="window.saveEntry()">Сохранить</button>
+                    <button class="btn" style="flex: 1; background: transparent; color: white;"
+                        onclick="window.hideModal()">Отмена</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="player-bar" class="player-bar">
+        <div class="player-info">
+            <div class="player-icon">🔐</div>
+            <div class="player-text">
+                <h4 id="player-title">Выберите сервис</h4>
+                <p id="player-subtitle">Пароль не выбран</p>
+            </div>
+        </div>
+        <div class="player-controls">
+            <div style="font-size: 1.2rem; margin-bottom: 4px;">👤 <span id="player-member">-</span></div>
+            <div class="progress-container">
+                <div id="progress-bar" class="progress-bar"></div>
+            </div>
+        </div>
+        <div style="width: 30%; display: flex; justify-content: flex-end;">
+            <button class="btn" onclick="document.getElementById('player-bar').style.display = 'none'"
+                style="background:transparent; font-size: 1.2rem;">×</button>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">Скопировано в буфер обмена</div>
+
+    <script src="crypto.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
