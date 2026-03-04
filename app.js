@@ -8,15 +8,93 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let CURRENT_FAMILY = 'All';
 
+    const SyncModule = {
+        getConfig: () => ({
+            url: localStorage.getItem('supabase_url'),
+            key: localStorage.getItem('supabase_key'),
+            familyId: localStorage.getItem('family_id')
+        }),
+        saveConfig: (url, key, id) => {
+            localStorage.setItem('supabase_url', url);
+            localStorage.setItem('supabase_key', key);
+            localStorage.setItem('family_id', id);
+        },
+        request: async (method, path, body = null) => {
+            const config = SyncModule.getConfig();
+            if (!config.url || !config.key) return null;
+
+            const headers = {
+                'apikey': config.key,
+                'Authorization': `Bearer ${config.key}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            };
+
+            try {
+                const response = await fetch(`${config.url}/rest/v1/${path}`, {
+                    method,
+                    headers,
+                    body: body ? JSON.stringify(body) : null
+                });
+                return await response.json();
+            } catch (e) {
+                console.error("Sync error:", e);
+                return null;
+            }
+        },
+        pull: async () => {
+            const config = SyncModule.getConfig();
+            if (!config.familyId) return null;
+            const data = await SyncModule.request('GET', `vault?id=eq.${config.familyId}&select=data`);
+            return data && data.length > 0 ? data[0].data : null;
+        },
+        push: async (encryptedData) => {
+            const config = SyncModule.getConfig();
+            if (!config.familyId) return;
+            // Пытаемся обновить или вставить (upsert)
+            return await SyncModule.request('POST', 'vault', {
+                id: config.familyId,
+                data: encryptedData,
+                updated_at: new Date().toISOString()
+            });
+        }
+    };
+
     // Работа с зашифрованным хранилищем
     async function saveVault(entries) {
         if (!window.SESSION_PASSWORD) return;
         const encrypted = await CryptoModule.encrypt(entries, window.SESSION_PASSWORD);
         localStorage.setItem('family_vault_data', encrypted);
+
+        // Синхронизация с облаком
+        const config = SyncModule.getConfig();
+        if (config.url && config.key && config.familyId) {
+            await SyncModule.push(encrypted);
+            console.log("Synced to cloud");
+        }
     }
 
     async function loadVault() {
-        const encrypted = localStorage.getItem('family_vault_data');
+        // Пробуем сначала из облака
+        const config = SyncModule.getConfig();
+        let encrypted = null;
+
+        if (config.url && config.key && config.familyId) {
+            try {
+                encrypted = await SyncModule.pull();
+                if (encrypted) {
+                    localStorage.setItem('family_vault_data', encrypted);
+                    console.log("Loaded from cloud");
+                }
+            } catch (e) {
+                console.warn("Cloud pull failed, using local", e);
+            }
+        }
+
+        if (!encrypted) {
+            encrypted = localStorage.getItem('family_vault_data');
+        }
+
         if (!encrypted) return [];
         try {
             return await CryptoModule.decrypt(encrypted, window.SESSION_PASSWORD);
@@ -253,5 +331,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.showDownloadInfo = () => {
         window.showToast('Инструкция по сборке EXE/APK в файле walkthrough.md');
+    };
+
+    // Настройки синхронизации
+    const syncModal = document.getElementById('sync-modal-overlay');
+    window.showSyncModal = () => {
+        const config = SyncModule.getConfig();
+        document.getElementById('supabase-url').value = config.url || '';
+        document.getElementById('supabase-key').value = config.key || '';
+        document.getElementById('family-id').value = config.familyId || '';
+        syncModal.style.display = 'flex';
+    };
+    window.hideSyncModal = () => syncModal.style.display = 'none';
+    window.saveSyncSettings = () => {
+        const url = document.getElementById('supabase-url').value;
+        const key = document.getElementById('supabase-key').value;
+        const id = document.getElementById('family-id').value;
+
+        SyncModule.saveConfig(url, key, id);
+        window.showToast('Настройки сохранены!');
+        window.hideSyncModal();
+        renderVault(); // Перерендерим (подтянет из облака если надо)
     };
 });
