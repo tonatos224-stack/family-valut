@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'apikey': config.key,
                 'Authorization': `Bearer ${config.key}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
+                'Prefer': 'return=representation,resolution=merge-duplicates'
             };
 
             try {
@@ -51,14 +51,41 @@ document.addEventListener('DOMContentLoaded', () => {
         push: async (encryptedData) => {
             const config = SyncModule.getConfig();
             if (!config.familyId) return;
-            // Пытаемся обновить или вставить (upsert)
             return await SyncModule.request('POST', 'vault', {
                 id: config.familyId,
                 data: encryptedData,
                 updated_at: new Date().toISOString()
             });
+        },
+        syncNow: async () => {
+            window.showToast('Синхронизация...');
+            await loadVault(); // loadVault now handles merging
+            await renderVault();
+            window.showToast('Готово!');
+        },
+        merge: (local, remote) => {
+            const map = new Map();
+            local.forEach(en => map.set(en.id, en));
+            remote.forEach(en => {
+                if (!map.has(en.id) || en.updated_at > (map.get(en.id).updated_at || 0)) {
+                    map.set(en.id, en);
+                }
+            });
+            return Array.from(map.values());
         }
     };
+
+    // Авто-синхронизация каждые 5 минут
+    setInterval(() => {
+        if (window.SESSION_PASSWORD) SyncModule.syncNow();
+    }, 5 * 60 * 1000);
+
+    // Синхронизация при возврате в приложение
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && window.SESSION_PASSWORD) {
+            SyncModule.syncNow();
+        }
+    });
 
     // Работа с зашифрованным хранилищем
     async function saveVault(entries) {
@@ -75,33 +102,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadVault() {
-        // Пробуем сначала из облака
-        const config = SyncModule.getConfig();
-        let encrypted = null;
+        let localEncrypted = localStorage.getItem('family_vault_data');
+        let localEntries = [];
 
-        if (config.url && config.key && config.familyId) {
+        if (localEncrypted && window.SESSION_PASSWORD) {
             try {
-                encrypted = await SyncModule.pull();
-                if (encrypted) {
-                    localStorage.setItem('family_vault_data', encrypted);
-                    console.log("Loaded from cloud");
+                localEntries = await CryptoModule.decrypt(localEncrypted, window.SESSION_PASSWORD);
+            } catch (e) { console.error("Local decrypt failed", e); }
+        }
+
+        const config = SyncModule.getConfig();
+        if (config.url && config.key && config.familyId && window.SESSION_PASSWORD) {
+            try {
+                const remoteEncrypted = await SyncModule.pull();
+                if (remoteEncrypted) {
+                    const remoteEntries = await CryptoModule.decrypt(remoteEncrypted, window.SESSION_PASSWORD);
+                    const merged = SyncModule.merge(localEntries, remoteEntries);
+
+                    // Если данные изменились после слияния - сохраняем везде
+                    if (JSON.stringify(merged) !== JSON.stringify(localEntries)) {
+                        console.log("Data merged from cloud");
+                        const newEncrypted = await CryptoModule.encrypt(merged, window.SESSION_PASSWORD);
+                        localStorage.setItem('family_vault_data', newEncrypted);
+                        await SyncModule.push(newEncrypted);
+                        return merged;
+                    }
                 }
             } catch (e) {
-                console.warn("Cloud pull failed, using local", e);
+                console.warn("Cloud sync failed, using local", e);
             }
         }
 
-        if (!encrypted) {
-            encrypted = localStorage.getItem('family_vault_data');
-        }
-
-        if (!encrypted) return [];
-        try {
-            return await CryptoModule.decrypt(encrypted, window.SESSION_PASSWORD);
-        } catch (e) {
-            console.error("Ошибка загрузки данных:", e);
-            throw e;
-        }
+        return localEntries;
     }
 
     // Обработка входа
@@ -173,13 +205,28 @@ document.addEventListener('DOMContentLoaded', () => {
         const login = document.getElementById('vault-login').value;
         const pass = document.getElementById('vault-pass').value;
         const member = document.getElementById('vault-member').value;
+        const editId = document.getElementById('vault-edit-id').value;
 
         if (!title || !pass) return window.showToast('Заполните название и пароль');
 
         try {
-            const entries = await loadVault();
-            const newEntry = { title, login, pass, member, id: Date.now() };
-            entries.push(newEntry);
+            let entries = await loadVault();
+
+            if (editId) {
+                // Редактирование
+                entries = entries.map(en => en.id === parseInt(editId) ? { ...en, title, login, pass, member } : en);
+            } else {
+                // Новая запись
+                const newEntry = {
+                    title,
+                    login,
+                    pass,
+                    member,
+                    id: Date.now(),
+                    updated_at: Date.now()
+                };
+                entries.push(newEntry);
+            }
 
             await saveVault(entries);
             renderVault();
@@ -189,9 +236,34 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('vault-title').value = '';
             document.getElementById('vault-login').value = '';
             document.getElementById('vault-pass').value = '';
+            document.getElementById('vault-edit-id').value = '';
         } catch (e) {
             alert('Ошибка при сохранении: ' + e.message);
         }
+    };
+
+    window.editEntry = async (id) => {
+        const entries = await loadVault();
+        const entry = entries.find(en => en.id === id);
+        if (!entry) return;
+
+        document.getElementById('modal-title').innerText = 'Редактировать запись';
+        document.getElementById('vault-title').value = entry.title;
+        document.getElementById('vault-login').value = entry.login || '';
+        document.getElementById('vault-pass').value = entry.pass;
+        document.getElementById('vault-member').value = entry.member || 'All';
+        document.getElementById('vault-edit-id').value = entry.id;
+
+        window.showModal();
+    };
+
+    window.showAddModal = () => {
+        document.getElementById('modal-title').innerText = 'Новая запись';
+        document.getElementById('vault-title').value = '';
+        document.getElementById('vault-login').value = '';
+        document.getElementById('vault-pass').value = '';
+        document.getElementById('vault-edit-id').value = '';
+        window.showModal();
     };
 
     // Генератор паролей
@@ -207,6 +279,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Функция просмотра пароля + Обновление плеера
     window.toggleVisibility = (btn, entry) => {
+        if (!btn) return;
         const card = btn.closest('.card');
         const codeEl = card.querySelector('code');
         const iconEl = btn.querySelector('span');
@@ -283,47 +356,137 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
 
-    // Поиск
-    document.getElementById('search-input').addEventListener('input', renderVault);
+    // --- SECURITY: AUTO-LOCK & IDLE TIMER ---
+    const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 минут
+    let idleTimer;
 
-    // Удаление
-    window.deleteEntry = async (id) => {
-        if (!confirm('Удалить эту запись?')) return;
-        const entries = await loadVault();
-        const filtered = entries.filter(en => en.id !== id);
-        await saveVault(filtered);
-        renderVault();
-        window.showToast('Запись удалена');
+    function resetIdleTimer() {
+        clearTimeout(idleTimer);
+        if (window.SESSION_PASSWORD) {
+            idleTimer = setTimeout(window.lockVaultManually, IDLE_TIMEOUT);
+        }
+    }
+
+    // Слушатели активности
+    ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(name => {
+        document.addEventListener(name, resetIdleTimer, true);
+    });
+
+    window.lockVaultManually = () => {
+        console.log("Vault Locked");
+        window.SESSION_PASSWORD = null;
+        authScreen.style.display = 'flex';
+        dashboard.style.display = 'none';
+        document.getElementById('sidebar').style.display = 'none';
+        document.getElementById('master-password').value = '';
+        window.showToast('Сейф заперт!');
+        clearTimeout(idleTimer);
     };
 
+    // --- PASSWORD STRENGTH METER ---
+    const strengthBar = document.querySelector('.strength-bar');
+    const strengthText = document.querySelector('.strength-text');
 
-    function addCardToUI(entry) {
+    function checkStrength(pass) {
+        let score = 0;
+        if (!pass) return updateBar(0, 'Введите пароль', '#3e3e3e');
+
+        if (pass.length > 8) score++;
+        if (pass.length > 12) score++;
+        if (/[A-Z]/.test(pass)) score++;
+        if (/[0-9]/.test(pass)) score++;
+        if (/[^A-Za-z0-9]/.test(pass)) score++;
+
+        if (score <= 2) updateBar(33, 'Слабый', '#ff4444');
+        else if (score <= 4) updateBar(66, 'Средний', '#ffbb33');
+        else updateBar(100, 'Сверхнадежный', 'var(--spotify-green)');
+    }
+
+    function updateBar(width, text, color) {
+        strengthBar.style.width = width + '%';
+        strengthBar.style.background = color;
+        strengthText.innerText = text;
+        strengthText.style.color = color;
+    }
+
+    document.getElementById('vault-pass').addEventListener('input', (e) => checkStrength(e.target.value));
+
+
+    // --- FAVORITES / PINNING ---
+    window.toggleFavorite = async (id) => {
+        let entries = await loadVault();
+        entries = entries.map(en => en.id === id ? { ...en, favorite: !en.favorite } : en);
+        await saveVault(entries);
+        renderVault();
+        window.showToast('Обновлено');
+    };
+
+    // Обновляем рендеринг: избранное вверху
+    async function renderVault() {
+        const term = document.getElementById('search-input').value.toLowerCase();
+        let entries = await loadVault();
+
+        if (CURRENT_FAMILY !== 'All') {
+            entries = entries.filter(en => en.member === CURRENT_FAMILY);
+        }
+
+        const filtered = entries.filter(en =>
+            en.title.toLowerCase().includes(term) ||
+            (en.login && en.login.toLowerCase().includes(term))
+        );
+
+        // Сортировка: сначала Избранное, потом по ID (времени)
+        filtered.sort((a, b) => {
+            if (a.favorite === b.favorite) return b.id - a.id;
+            return a.favorite ? -1 : 1;
+        });
+
+        list.innerHTML = '';
+        filtered.forEach((entry, index) => {
+            addCardToUI(entry, index);
+        });
+    }
+
+
+    function addCardToUI(entry, index = 0) {
         const card = document.createElement('div');
-        card.className = 'card';
+        card.className = `card ${entry.favorite ? 'is-favorite' : ''}`;
+        card.style.animationDelay = `${index * 0.05}s`;
         card.onclick = (e) => {
-            // Если кликнули не на кнопку удаления или копирования
             if (!e.target.closest('button')) {
                 window.toggleVisibility(card.querySelector('.play-btn'), entry);
             }
         };
 
         card.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-                 <span style="font-size: 0.7rem; color: var(--text-subdued); text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">
-                    ${entry.member === 'All' ? 'ОБЩЕЕ' : (entry.member || 'ОБЩЕЕ').toUpperCase()}
-                </span>
-                <button class="btn" style="background:none; border:none; color:var(--text-subdued); padding:0; cursor:pointer; font-size: 1.2rem;" onclick="event.stopPropagation(); window.deleteEntry(${entry.id})">×</button>
+            <div class="card-play-container">
+                <div class="play-btn-static">
+                    <span>${entry.favorite ? '♥' : '▶'}</span>
+                </div>
+                <div class="play-btn">
+                    <span>▶</span>
+                </div>
             </div>
-            <h3 style="font-size: 1.1rem; margin-bottom: 4px;">${entry.title}</h3>
-            <div class="user-info" style="margin-bottom: 20px;">${entry.login || 'Без логина'}</div>
-            
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
-                <code style="color: var(--text-subdued); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">••••••••</code>
-                <button class="btn" style="background: var(--bg-highlight); padding: 4px 12px; font-size: 0.7rem; color: white;" onclick="event.stopPropagation(); window.copyToClipboard('${entry.pass}')">COPY</button>
-            </div>
-
-            <div class="play-btn">
-                <span style="color: black; font-size: 1.2rem;">▶</span>
+            <div class="card-main-content">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+                     <span style="font-size: 0.6rem; color: var(--text-subdued); text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">
+                        ${entry.member === 'All' ? 'ОБЩЕЕ' : (entry.member || 'ОБЩЕЕ').toUpperCase()}
+                    </span>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn-icon heart-btn" onclick="event.stopPropagation(); window.toggleFavorite(${entry.id})" style="color: ${entry.favorite ? 'var(--spotify-green)' : 'var(--text-subdued)'}">${entry.favorite ? '♥' : '♡'}</button>
+                        <button class="btn-icon" onclick="event.stopPropagation(); window.editEntry(${entry.id})">✎</button>
+                        <button class="btn-icon" onclick="event.stopPropagation(); window.deleteEntry(${entry.id})">×</button>
+                    </div>
+                </div>
+                <h3 style="font-size: 1rem; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${entry.title}</h3>
+                <div class="user-info" style="margin-bottom: 12px; font-size: 0.75rem; color: var(--text-subdued);">${entry.login || 'Без логина'}</div>
+                
+                <div class="card-actions">
+                    <div class="action-row">
+                        <code class="password-mask">••••••••</code>
+                        <button class="btn btn-tiny" onclick="event.stopPropagation(); window.copyToClipboard('${entry.pass}')">PASS</button>
+                    </div>
+                </div>
             </div>
         `;
         list.appendChild(card);
@@ -351,6 +514,38 @@ document.addEventListener('DOMContentLoaded', () => {
         SyncModule.saveConfig(url, key, id);
         window.showToast('Настройки сохранены!');
         window.hideSyncModal();
-        renderVault(); // Перерендерим (подтянет из облака если надо)
+        renderVault();
     };
+
+    // Динамические цитаты (мемасы)
+    const quotes = [
+        "«Я внутри». — Каждый хакер в истории.",
+        "«Пароль — 'password'.» — Эксперт по безопасности.",
+        "«Сейф зашифрован. Мыши не проскочат». 🐭",
+        "«Взломай планету!» — Хай-тек, низкий уровень жизни. 🌎",
+        "«Твои данные в большей безопасности, чем кот в коробке». 🐱",
+        "«Ультагениальный алгоритм активен». 🧠",
+        "«Матрица владеет тобой... но у нас твои пароли». 💊",
+        "«Я сделаю ему предложение, от которого он не сможет отказаться». — Крестный отец. 🌹",
+        "«Нужно больше золота!» — Warcraft III. 🪙",
+        "«Потрачено». — GTA: San Andreas. 💀",
+        "«Война... война никогда не меняется». — Fallout. ☢️",
+        "«Ты не готов!» — Иллидан. 😈",
+        "«Акела промахнулся!» — Маугли. 🐺",
+        "«Ничто не истинно, всё дозволено». — Assassin's Creed. 🦅",
+        "«Hasta la vista, baby». — Терминатор. 🦾",
+        "«Да пребудет с тобой Сила». — Звездные войны. ✨"
+    ];
+
+    function rotateQuote() {
+        const quoteEl = document.getElementById('hacker-quote');
+        if (quoteEl) {
+            quoteEl.innerText = quotes[Math.floor(Math.random() * quotes.length)];
+        }
+    }
+
+    if (document.getElementById('hacker-quote')) {
+        rotateQuote();
+        setInterval(rotateQuote, 10000); // Смена каждые 10 секунд
+    }
 });

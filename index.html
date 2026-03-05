@@ -21,9 +21,18 @@
                 <div class="nav-item" onclick="document.getElementById('search-input').focus()">
                     <span>🔍</span> Поиск
                 </div>
+                <div class="nav-item" onclick="SyncModule.syncNow()">
+                    <span>🔄</span> Обновить данные
+                </div>
+                <a href="https://t.me/bruhhx336" target="_blank" class="nav-item" style="text-decoration: none;">
+                    <span>💬</span> Наш Чат (TG)
+                </a>
             </div>
 
             <div class="sidebar-library" style="flex: 1; display: flex; flex-direction: column;">
+                <div class="hacker-quote" id="hacker-quote">
+                    "I'm in." — Every hacker ever.
+                </div>
                 <h4>Семейные папки</h4>
                 <div id="family-nav" style="flex: 1;">
                     <div class="nav-item" onclick="window.filterFamily('Папа')"><span>👨</span> Папа</div>
@@ -34,6 +43,10 @@
 
                 <div class="nav-item" onclick="window.showSyncModal()">
                     <span>⚙️</span> Настройки синхронизации
+                </div>
+
+                <div class="nav-item lock-btn" onclick="window.lockVaultManually()" style="color: #ff4444;">
+                    <span>🔒</span> Запереть сейф
                 </div>
 
                 <div class="install-app" onclick="window.showDownloadInfo()">
@@ -67,7 +80,8 @@
                     style="display: flex; gap: 12px; align-items: center; width: 100%; justify-content: space-between;">
                     <input type="text" id="search-input" class="input-field" placeholder="Поиск..."
                         style="margin: 0; flex: 1; border-radius: 500px; padding: 12px 20px; background: rgba(255,255,255,0.1);">
-                    <button class="btn btn-primary" onclick="window.showModal()" style="padding: 12px 20px;">+</button>
+                    <button class="btn btn-primary" onclick="window.showAddModal()"
+                        style="padding: 12px 20px;">+</button>
                 </div>
             </header>
 
@@ -81,10 +95,11 @@
             <div class="modal">
                 <div class="modal-header"
                     style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-                    <h3>Новая запись</h3>
+                    <h3 id="modal-title">Новая запись</h3>
                     <button class="btn" onclick="window.hideModal()"
                         style="background: transparent; font-size: 1.5rem;">×</button>
                 </div>
+                <input type="hidden" id="vault-edit-id">
                 <div class="form-group">
                     <label>ВЛАДЕЛЕЦ</label>
                     <select id="vault-member" class="input-field">
@@ -110,6 +125,10 @@
                             style="flex: 1;">
                         <button class="btn" onclick="window.generatePass()"
                             style="background: var(--bg-highlight); padding: 0 16px;">🎲</button>
+                    </div>
+                    <div id="password-strength" class="strength-meter">
+                        <div class="strength-bar"></div>
+                        <span class="strength-text">Введите пароль</span>
                     </div>
                 </div>
                 <div style="display: flex; gap: 12px; margin-top: 32px;">
